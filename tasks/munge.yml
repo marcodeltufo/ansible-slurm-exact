@@ -12,6 +12,7 @@
   ansible.builtin.copy:
     src: "{{ slurm_munge_key }}"
     dest: /etc/munge/munge.key
+    remote_src: yes
     owner: munge
     group: munge
     mode: 0400
