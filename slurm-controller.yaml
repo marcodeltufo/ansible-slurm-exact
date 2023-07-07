@@ -1,0 +1,168 @@
+- name: Prepare the system for Slurm
+  hosts: controller
+
+  tasks:
+  - name: Update and upgrade apt packages
+    become: true
+    apt:
+      upgrade: yes
+      update_cache: yes
+      cache_valid_time: 86400
+  - name: Add group "munge"
+    group:
+      name: munge
+      gid: 9000
+  - name: Create munge user
+    ansible.builtin.user:
+      name: munge
+      state: present
+      uid: 9000
+      groups: munge
+  - name: Create slurm user
+    ansible.builtin.user:
+      name: slurm
+      state: present
+      uid: 888
+  - name: Create slurmctld directory
+    file:
+      path: /var/spool/slurmctld
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurmd directory
+    file:
+      path: /var/spool/slurmd
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurmd directory
+    file:
+      path: /var/run/slurm
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurm log directory
+    file:
+      path: /var/log/slurm
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Install MySQL
+    apt:
+      pkg:
+        - python3-pymysql
+        - mysql-server
+        - mysql-client
+        - libmysqlclient-dev
+      state: latest
+      update_cache: true
+  - name: Create "slurm_acct_db" database
+    community.mysql.mysql_db:
+      name: slurm_acct_db
+      state: present
+      login_unix_socket: /var/run/mysqld/mysqld.sock
+  - name: Create slurm MySQL user
+    community.mysql.mysql_user:
+      name: slurm
+      password: slurmdb_passwort
+      priv: "slurm_acct_db.*:ALL"
+      state: present
+      login_unix_socket: /var/run/mysqld/mysqld.sock
+  - name: Install mailutils  (state=present is optional)
+    ansible.builtin.apt:
+      name: mailutils
+      state: present
+- name: Slurm execution hosts
+  hosts: controller
+  roles:
+    - role: ansible-slurm
+      become: True
+  vars:
+    slurm_cgroup_config:
+      CgroupMountpoint: "/sys/fs/cgroup"
+      CgroupAutomount: yes
+      ConstrainCores: yes
+      TaskAffinity: no
+      ConstrainRAMSpace: yes
+      ConstrainSwapSpace: no
+      ConstrainDevices: no
+      AllowedRamSpace: 100
+      AllowedSwapSpace: 0
+      MaxRAMPercent: 100
+      MaxSwapPercent: 100
+      MinRAMSpace: 30
+    slurm_config:
+      ClusterName: ansible-test-cluster
+      SlurmctldHost: ansible-slurm-1
+      MailProg: "/bin/mail"
+      MpiDefault: none
+      AuthInfo: "/var/run/munge/munge.socket.2"
+      AuthType: "auth/munge"
+      CredType: "cred/none"
+      ProctrackType: "proctrack/cgroup"
+      ReturnToService: 1
+      SlurmctldPidFile: "/run/slurmctld.pid"
+      SlurmctldPort: 6817
+      SlurmdPidFile: "/run/slurmd.pid"
+      SlurmdPort: 6818
+      SlurmdSpoolDir: "/var/spool/slurmd"
+      SlurmUser: slurm
+      StateSaveLocation: "/var/spool/slurmctld"
+      SwitchType: "switch/none"
+      TaskPlugin: "task/affinity"
+      InactiveLimit: 0
+      KillWait: 30
+      MinJobAge: 300
+      SlurmctldTimeout: 120
+      SlurmdTimeout: 300
+      Waittime: 0
+      SelectTypeParameters: "CR_Core"
+      SchedulerType: "sched/backfill"
+      SelectType: "select/cons_tres"
+      AccountingStorageType: "accounting_storage/slurmdbd"
+      JobCompType: "jobcomp/none"
+      JobAcctGatherFrequency: 30
+      JobAcctGatherType: "jobacct_gather/linux"
+      SlurmctldDebug: info
+      SlurmctldLogFile: "/var/log/slurm/slurmctld.log"
+      SlurmdDebug: info
+      SlurmdLogFile: "/var/log/slurm/slurmd.log"
+    slurmdbd_config:
+      ArchiveEvents: yes
+      ArchiveJobs: yes
+      ArchiveSteps: no
+      ArchiveSuspend: no
+      AuthInfo: "/var/run/munge/munge.socket.2"
+      AuthType: "auth/munge"
+      DbdHost: "localhost"
+      DebugLevel: "4"
+      PurgeEventMonths: "1"
+      PurgeJobMonths: "12"
+      PurgeStepMonths: "1"
+      PurgeSuspendMonths: "1"
+      LogFile: "/var/log/slurm/slurmdbd.log"
+      PidFile: "/run/slurmdbd.pid"
+      StoragePass: "slurmdb_passwort"
+      StorageType: "accounting_storage/mysql"
+      StorageUser: "slurm"
+    slurm_create_user: yes
+    slurm_munge_key: "/etc/munge/munge.key"
+    slurm_nodes:
+      - name: "{{ groups['computes']| join(',') }}"
+        CoresPerSocket: 1
+        Sockets: 1
+        ThreadsPerCore: 1
+    slurm_partitions:
+      - name: computing_nodes
+        Default: YES
+        MaxTime: UNLIMITED
+        Nodes: "{{ groups['computes']| join(',') }}"
+    slurm_roles: [ 'controller', 'dbd']
+    slurm_user:
+      comment: "Slurm Workload Manager"
+      gid: 888
+      group: slurm
+      home: "/var/lib/slurm"
+      name: slurm
+      shell: "/usr/sbin/nologin"
+      uid: 888
