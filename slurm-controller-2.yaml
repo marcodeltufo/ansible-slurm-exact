@@ -1,0 +1,297 @@
+- name: Prepare the system for Slurm
+  hosts: controller
+
+  tasks:
+  - name: Update and upgrade apt packages
+    become: true
+    apt:
+      upgrade: yes
+      update_cache: yes
+      cache_valid_time: 86400
+  - name: Add group "munge"
+    group:
+      name: munge
+      gid: 9000
+  - name: Create munge user
+    ansible.builtin.user:
+      name: munge
+      state: present
+      uid: 9000
+      groups: munge
+  - name: Create slurm user
+    ansible.builtin.user:
+      name: slurm
+      state: present
+      uid: 888
+  - name: Create slurmctld directory
+    file:
+      path: /var/spool/slurmctld
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurmd directory
+    file:
+      path: /var/spool/slurmd
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurmd directory
+    file:
+      path: /var/run/slurm
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Create slurm log directory
+    file:
+      path: /var/log/slurm
+      state: directory
+      owner: slurm
+      mode: 0700
+  - name: Install MySQL
+    apt:
+      pkg:
+        - python3-pymysql
+        - mysql-server
+        - mysql-client
+        - libmysqlclient-dev
+      state: latest
+      update_cache: true
+  - name: Create "slurm_acct_db" database
+    community.mysql.mysql_db:
+      name: slurm_acct_db
+      state: present
+      login_unix_socket: /var/run/mysqld/mysqld.sock
+  - name: Create slurm MySQL user
+    community.mysql.mysql_user:
+      name: slurm
+      password: slurmdb_passwort
+      priv: "slurm_acct_db.*:ALL"
+      state: present
+      login_unix_socket: /var/run/mysqld/mysqld.sock
+  - name: Install mailutils  (state=present is optional)
+    ansible.builtin.apt:
+      name: mailutils
+      state: present
+- name: Slurm execution hosts
+  hosts: controller
+  roles:
+    - role: ansible-slurm
+      become: True
+  vars:
+    slurm_cgroup_config: # DA RIVEDERE
+      CgroupMountpoint: "/sys/fs/cgroup"
+      CgroupAutomount: yes
+      ConstrainCores: yes
+      TaskAffinity: no
+      ConstrainRAMSpace: yes
+      ConstrainSwapSpace: no
+      ConstrainDevices: no
+      AllowedRamSpace: 100
+      AllowedSwapSpace: 0
+      MaxRAMPercent: 100
+      MaxSwapPercent: 100
+      MinRAMSpace: 30
+    slurm_config:
+      ClusterName: slurm_cluster
+      ControlMachine: login-biomed-01
+      SchedulerType: sched/backfill
+      SchedulerPort: 7321
+      SelectType: "select/cons_tres"
+      SelectTypeParameters: "CR_Core_Memory"
+      FastSchedule: 1
+      JobSubmitPlugins: "require_timelimit"
+      RebootProgram :  "/sbin/shutdown -r now"
+      PriorityType: "priority/multifactor"
+      PriorityWeightAge: 2000
+      PriorityWeightFairshare: 10000
+      PriorityWeightJobSize: 1000
+      PriorityWeightPartition: 4000
+      PriorityWeightQOS: 4000
+      PriorityDecayHalfLife: 14-0
+      PriorityUsageResetPeriod: NONE
+      PriorityMaxAge: 7-0
+      PriorityFavorSmall: no
+      PriorityFlags: "FAIR_TREE"
+      GresTypes: gpu
+      AccountingStorageTRES: "gres/gpu"
+      AccountingStorageType: "accounting_storage/slurmdbd"
+      AccountingStorageEnforce: "associations,limits,qos"
+      AccountingStorageHost: "login-biomed-01"
+      AcctGatherEnergyType: "acct_gather_energy/none"
+      AcctGatherInfinibandType: "acct_gather_infiniband/none"
+      AcctGatherFilesystemType: "acct_gather_filesystem/none"
+      AcctGatherProfileType: "acct_gather_profile/none"
+      JobacctGatherType: "jobacct_gather/cgroup"
+      JobAcctGatherFrequency: 60
+      CheckpointType: "checkpoint/none"
+      JobRequeue: 0
+      MaxArraySize: 150000
+      MaxJobCount: 1000000  #1'000'000
+      MpiDefault: "pmi2"
+      ProctrackType: "proctrack/cgroup"
+      PropagateResourceLimits: NONE
+      ReturnToService: 1
+      TmpFs: /scratch
+      TaskPlugin: "task/cgroup"
+      Prolog: "/etc/slurm/scripts/prolog.sh"
+      TaskProlog: "/etc/slurm/scripts/task_prolog.sh"
+      Epilog: "/etc/slurm/scripts/epilog.sh"
+      PrologFlags: "x11"
+      BatchStartTimeout: 60
+      CompleteWait: 60
+      InactiveLimit: 0
+      KillWait: 60
+      MinJobAge: 300
+      Waittime: 0
+      SlurmUser: slurm
+      SlurmctldPidFile: "/var/run/slurmctld.pid"
+      SlurmctldPort: 6817
+      SlurmctldTimeout: 300
+      StateSaveLocation: "/var/spool/slurm"
+      SlurmctldDebug: "error"
+      SlurmctldLogFile: "/var/log/slurm/slurmctld.log"
+      DebugFlags: "backfill,cpu_bind,priority,reservation,selecttype,steps"
+      MailProg: "/usr/bin/mail"
+      SlurmdPort: 6818
+      SlurmdPidFile: "/var/run/slurmd.pid"
+      SlurmdSpoolDir: "/var/spool/slurm"
+      SlurmdTimeout: 300
+      SlurmdDebug: "verbose"
+      SlurmdLogFile: "/var/log/slurm/slurmd.log"
+      AuthType: "auth/munge"
+      CryptoType: "crypto/munge"
+      DisableRootJobs: no
+      DefMemPerCPU: 8000
+    slurmdbd_config: # DA RIVEDERE
+      ArchiveEvents: yes
+      ArchiveJobs: yes
+      ArchiveSteps: no
+      ArchiveSuspend: no
+      AuthInfo: "/var/run/munge/munge.socket.2"
+      AuthType: "auth/munge"
+      DbdHost: "localhost"
+      DebugLevel: "4"
+      PurgeEventMonths: "1"
+      PurgeJobMonths: "12"
+      PurgeStepMonths: "1"
+      PurgeSuspendMonths: "1"
+      LogFile: "/var/log/slurm/slurmdbd.log"
+      PidFile: "/run/slurmdbd.pid"
+      StoragePass: "slurmdb_passwort"
+      StorageType: "accounting_storage/mysql"
+      StorageUser: "slurm"
+    slurm_create_user: yes
+    slurm_munge_key: "/etc/munge/munge.key"
+    slurm_nodes:
+      - name: "compute-biomed-[1,2,16]"
+        RealMemory: 732825
+        CPUs: 34
+        Sockets: 34
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-[3,4,5,22]"
+        RealMemory: 878508
+        CPUs: 56
+        Sockets: 56
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-10"
+        RealMemory: 2004615
+        CPUs: 124
+        Sockets: 124
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-[11-14]"
+        RealMemory: 114927
+        CPUs: 30
+        Sockets: 30
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-15"
+        RealMemory: 469184
+        CPUs: 120
+        Sockets: 120
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-16"
+        RealMemory: 732825
+        CPUs: 34
+        Sockets: 34
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "compute-biomed-[17-21]"
+        RealMemory: 437707
+        CPUs: 28
+        Sockets: 28
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-01"
+        RealMemory: 484953
+        Gres: "gpu:v100:8"
+        CPUs: 42
+        Sockets: 42
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[02-06,19-21,24,25]"
+        RealMemory: 362891
+        Gres: "gpu:rtx2080ti:8"
+        CPUs: 34
+        Sockets: 34
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[07-13,22]"
+        RealMemory: 484933
+        Gres: "gpu:rtx2080ti:8"
+        CPUs: 124
+        Sockets: 124
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[14,15]"
+        RealMemory: 484933
+        Gres: "gpu:titanrtx:8"
+        CPUs: 124
+        Sockets: 124
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[16,17]"
+        RealMemory: 240833
+        Gres: "gpu:gtx1080:8"
+        CPUs: 18
+        Sockets: 18
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[18]"
+        RealMemory: 240833
+        Gres: "gpu:rtx1080ti:8"
+        CPUs: 18
+        Sockets: 18
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+      - name: "gpu-biomed-[23]"
+        RealMemory: 484933
+        Gres: "gpu:rtx3090:8"
+        CPUs: 124
+        Sockets: 124
+        CoresPerSocket: 1
+        ThreadsPerCore: 1
+    slurm_partitions:
+      - name: compute
+        Default: YES
+        State: UP
+        TRESBillingWeights: "CPU=1.0,Mem=0.125G"
+        MaxTime: "7-00:00:00"
+        Nodes: "compute-biomed-[01-05,10-22]"
+      - name: gpu
+        State: UP
+        TRESBillingWeights: "CPU=1.0,Mem=0.125G,GRES/gpu=15.0"
+        MaxTime: "7-00:00:00"
+        Nodes: "gpu-biomed-[01-25]"
+    slurm_roles: [ 'controller', 'dbd']
+    slurm_user:
+      comment: "Slurm Workload Manager"
+      gid: 888
+      group: slurm
+      home: "/var/lib/slurm"
+      name: slurm
+      shell: "/usr/sbin/nologin"
+      uid: 888
