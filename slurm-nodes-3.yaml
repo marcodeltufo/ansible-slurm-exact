@@ -1,5 +1,5 @@
 - name: Prepare the system for Slurm
-  hosts: controller
+  hosts: computes
 
   tasks:
   - name: Update and upgrade apt packages
@@ -23,21 +23,9 @@
       name: slurm
       state: present
       uid: 888
-  - name: Create slurmctld directory
-    file:
-      path: /var/spool/slurmctld
-      state: directory
-      owner: slurm
-      mode: 0700
-  - name: Create slurmd spool directory
-    file:
-      path: /var/spool/slurmd
-      state: directory
-      owner: slurm
-      mode: 0700
   - name: Create slurm spool directory
     file:
-      path: /var/spool/slurm
+      path: /var/spool/slurmd
       state: directory
       owner: slurm
       mode: 0700
@@ -53,33 +41,19 @@
       state: directory
       owner: slurm
       mode: 0700
-  - name: Install MySQL
-    apt:
-      pkg:
-        - python3-pymysql
-        - mysql-server
-        - mysql-client
-        - libmysqlclient-dev
-      state: latest
-      update_cache: true
-  - name: Create "slurm_acct_db" database
-    community.mysql.mysql_db:
-      name: slurm_acct_db
-      state: present
-      login_unix_socket: /var/run/mysqld/mysqld.sock
-  - name: Create slurm MySQL user
-    community.mysql.mysql_user:
-      name: slurm
-      password: slurmdb_passwort
-      priv: "slurm_acct_db.*:ALL"
-      state: present
-      login_unix_socket: /var/run/mysqld/mysqld.sock
-  - name: Install mailutils  (state=present is optional)
-    ansible.builtin.apt:
-      name: mailutils
-      state: present
+- name: Cpying hosts file to nodes
+  hosts: computes
+  tasks:
+    - name: Cpying hosts file to nodes
+      become: true
+      copy:
+        src: /etc/hosts
+        dest: /etc
+        owner: root
+        group: root
+        mode: 0700
 - name: Slurm execution hosts
-  hosts: controller
+  hosts: computes
   roles:
     - role: ansible-slurm
       become: True
@@ -197,15 +171,15 @@
         ThreadsPerCore: 1
     slurm_partitions:
       - name: low
-        Default: YES
         MaxTime: "UNLIMITED"
         Nodes: "ansible-slurm-3"
         PriorityTier: 1
       - name: high
+        Default: YES
         MaxTime: "UNLIMITED"
         Nodes: "ansible-slurm-3"
         PriorityTier: 65533
-    slurm_roles: [ 'controller', 'dbd']
+    slurm_roles: [ 'exec' ]
     slurm_user:
       comment: "Slurm Workload Manager"
       gid: 888
@@ -214,14 +188,11 @@
       name: slurm
       shell: "/usr/sbin/nologin"
       uid: 888
-- name: Adds the cluster to accounting
-  hosts: controller
+- name: Copying munge key to nodes
+  hosts: computes
   tasks:
-    - name: Adds the cluster to accounting
-      shell: yes | sacctmgr add cluster slurm_cluster
-      ignore_errors: true
-    - name: restart slurmctld
-      systemd:
-        name: slurmctld
-        state: restarted
-      become: yes
+    - name: Transfer munge.key from controller to nodes
+      synchronize:
+        src: /etc/munge/munge.key
+        dest: /etc/munge/
+      delegate_to: ansible-slurm-4
